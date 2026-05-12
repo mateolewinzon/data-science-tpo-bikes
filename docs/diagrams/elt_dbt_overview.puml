@@ -1,0 +1,101 @@
+@startuml elt_dbt_overview
+!theme plain
+title Pipeline ELT con dbt-duckdb — Bicis BA (Medallion RAW → STG → MART)
+
+skinparam rectangle {
+  RoundCorner 12
+  FontSize 13
+  BackgroundColor<<bronze>> #CD7F32
+  FontColor<<bronze>> white
+  BackgroundColor<<silver>> #BFBFBF
+  BackgroundColor<<gold>> #F2C14E
+  BackgroundColor<<src>> #E8E8E8
+  BackgroundColor<<sink>> #D6EAF8
+  BackgroundColor<<tool>> #FFF2CC
+}
+skinparam ArrowFontSize 11
+skinparam shadowing false
+
+' ---------- Origen ----------
+package "Origen — data.buenosaires.gob.ar" {
+  rectangle "recorridos_*.csv\n(2022-2024)" as src_rec <<src>>
+  rectangle "estaciones_*.csv" as src_est <<src>>
+  rectangle "usuarios_*.csv" as src_usr <<src>>
+}
+
+' ---------- Lakehouse ----------
+package "Data Lakehouse — Parquet" {
+
+  package "RAW · Bronze" {
+    rectangle "raw_recorridos" as raw_rec <<bronze>>
+    rectangle "raw_estaciones" as raw_est <<bronze>>
+    rectangle "raw_usuarios"   as raw_usr <<bronze>>
+  }
+
+  package "STG · Silver\n(limpieza + normalización)" {
+    rectangle "stg_recorridos\n• tipos\n• timestamps UTC\n• dedup" as stg_rec <<silver>>
+    rectangle "stg_estaciones\n• lat/long válidos\n• nombres estandarizados" as stg_est <<silver>>
+    rectangle "stg_usuarios\n• edad/género normalizados" as stg_usr <<silver>>
+  }
+
+  package "MART · Gold" {
+    rectangle "MART_BI (modelo estrella)" as mart_bi <<gold>> {
+      rectangle "fct_recorridos" as fct
+      rectangle "dim_estacion"   as dim_est
+      rectangle "dim_usuario"    as dim_usr
+      rectangle "dim_tiempo"     as dim_t
+    }
+    rectangle "MART_ML\nfeatures_recorridos\n(input + target:\np.ej. duración / demanda)" as mart_ml <<gold>>
+  }
+}
+
+' ---------- Consumo ----------
+rectangle "Dashboard BI\nLooker Studio / PowerBI" as bi <<sink>>
+rectangle "Modelo ML\nscikit-learn" as ml <<sink>>
+
+' ---------- dbt-duckdb ----------
+package "dbt-duckdb project" as dbtproj <<tool>> {
+  rectangle "models/\nstaging · marts" as dbt_models
+  rectangle "tests/\nnot_null · unique\naccepted_values · relationships" as dbt_tests
+  rectangle "sources.yml\nseeds/ · macros/" as dbt_sources
+  rectangle "docs/\nlineage + catálogo" as dbt_docs
+}
+
+' ---------- Flujo principal ----------
+src_rec --> raw_rec : EL\n(read_csv_auto)
+src_est --> raw_est : EL
+src_usr --> raw_usr : EL
+
+raw_rec --> stg_rec : dbt run
+raw_est --> stg_est : dbt run
+raw_usr --> stg_usr : dbt run
+
+stg_rec --> fct
+stg_est --> dim_est
+stg_usr --> dim_usr
+stg_rec --> dim_t   : derivado
+
+stg_rec --> mart_ml
+stg_est --> mart_ml
+stg_usr --> mart_ml
+
+mart_bi --> bi : parquet
+mart_ml --> ml : parquet
+
+' ---------- dbt como capa transversal ----------
+dbt_sources ..> raw_rec : declara
+dbt_models  ..> stg_rec : materializa
+dbt_models  ..> mart_bi : materializa
+dbt_models  ..> mart_ml : materializa
+dbt_tests   ..> stg_rec : valida
+dbt_tests   ..> mart_bi : valida
+dbt_tests   ..> mart_ml : valida
+
+note bottom of dbt_tests
+  Métricas de calidad
+  (≥ 2 con umbrales)
+  + validación cruzada
+  vs. equipo Python
+end note
+
+@enduml

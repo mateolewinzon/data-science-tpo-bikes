@@ -1,0 +1,13 @@
+bicis_elt:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "db/bicis.duckdb"
+      threads: 4
+      external_root: "data"
+    prod:
+      type: duckdb
+      path: "db/bicis_prod.duckdb"
+      threads: 4
+      external_root: "data"

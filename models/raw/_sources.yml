@@ -1,0 +1,20 @@
+version: 2
+
+sources:
+  - name: bicis_src
+    description: >
+      Datos crudos del sistema de Bicicletas Públicas de Buenos Aires (2022-2024).
+      Fuente: https://data.buenosaires.gob.ar/dataset/bicicletas-publicas
+    meta:
+      external_location: "data/source/{name}.csv"
+    tables:
+      - name: recorridos_2022
+        description: Recorridos (trips) realizados durante 2022.
+      - name: recorridos_2023
+        description: Recorridos realizados durante 2023.
+      - name: recorridos_2024
+        description: Recorridos realizados durante 2024.
+      - name: estaciones
+        description: Catálogo de estaciones (id, nombre, lat/long, barrio).
+      - name: usuarios
+        description: Padrón de usuarios (id anonimizado, edad, género, fecha alta).

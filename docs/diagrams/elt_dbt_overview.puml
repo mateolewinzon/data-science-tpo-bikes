@@ -18,30 +18,34 @@ skinparam shadowing false
 
 ' ---------- Origen ----------
 package "Origen — data.buenosaires.gob.ar" {
-  rectangle "recorridos_*.csv\n(2022-2024)" as src_rec <<src>>
-  rectangle "estaciones_*.csv" as src_est <<src>>
-  rectangle "usuarios_*.csv" as src_usr <<src>>
+  rectangle "trips_2022.csv"                              as src_rec22 <<src>>
+  rectangle "trips_2023.csv"                              as src_rec23 <<src>>
+  rectangle "badata_ecobici_recorridos_realizados_2024.csv" as src_rec24 <<src>>
+  rectangle "usuarios_ecobici_2022.csv"                   as src_usr22 <<src>>
+  rectangle "usuarios_ecobici_2023.csv"                   as src_usr23 <<src>>
+  rectangle "usuarios_ecobici_2024.csv"                   as src_usr24 <<src>>
 }
 
 ' ---------- Lakehouse ----------
 package "Data Lakehouse — Parquet" {
 
-  package "RAW · Bronze" {
-    rectangle "raw_recorridos" as raw_rec <<bronze>>
-    rectangle "raw_estaciones" as raw_est <<bronze>>
-    rectangle "raw_usuarios"   as raw_usr <<bronze>>
+  package "RAW · Bronze\nespejo 1:1 del CSV — 1 parquet por archivo (sin merge cross-year)" {
+    rectangle "raw_recorridos_2022" as raw_rec22 <<bronze>>
+    rectangle "raw_recorridos_2023" as raw_rec23 <<bronze>>
+    rectangle "raw_recorridos_2024" as raw_rec24 <<bronze>>
+    rectangle "raw_usuarios_2022"   as raw_usr22 <<bronze>>
+    rectangle "raw_usuarios_2023"   as raw_usr23 <<bronze>>
+    rectangle "raw_usuarios_2024"   as raw_usr24 <<bronze>>
   }
 
-  package "STG · Silver\n(limpieza + normalización)" {
-    rectangle "stg_recorridos\n• tipos\n• timestamps UTC\n• dedup" as stg_rec <<silver>>
-    rectangle "stg_estaciones\n• lat/long válidos\n• nombres estandarizados" as stg_est <<silver>>
-    rectangle "stg_usuarios\n• edad/género normalizados" as stg_usr <<silver>>
+  package "STG · Silver\nUNION cross-year + limpieza + normalización" {
+    rectangle "stg_recorridos\n• union 2022-2024\n• tipos\n• timestamps UTC\n• dedup" as stg_rec <<silver>>
+    rectangle "stg_usuarios\n• union 2022-2024\n• edad/género normalizados" as stg_usr <<silver>>
   }
 
   package "MART · Gold" {
     rectangle "MART_BI (modelo estrella)" as mart_bi <<gold>> {
       rectangle "fct_recorridos" as fct
-      rectangle "dim_estacion"   as dim_est
       rectangle "dim_usuario"    as dim_usr
       rectangle "dim_tiempo"     as dim_t
     }
@@ -62,34 +66,38 @@ package "dbt-duckdb project" as dbtproj <<tool>> {
 }
 
 ' ---------- Flujo principal ----------
-src_rec --> raw_rec : EL\n(read_csv_auto)
-src_est --> raw_est : EL
-src_usr --> raw_usr : EL
+src_rec22 --> raw_rec22 : EL\n(read_csv)
+src_rec23 --> raw_rec23 : EL
+src_rec24 --> raw_rec24 : EL
+src_usr22 --> raw_usr22 : EL
+src_usr23 --> raw_usr23 : EL
+src_usr24 --> raw_usr24 : EL
 
-raw_rec --> stg_rec : dbt run
-raw_est --> stg_est : dbt run
-raw_usr --> stg_usr : dbt run
+raw_rec22 --> stg_rec : union all
+raw_rec23 --> stg_rec : union all
+raw_rec24 --> stg_rec : union all
+raw_usr22 --> stg_usr : union all
+raw_usr23 --> stg_usr : union all
+raw_usr24 --> stg_usr : union all
 
 stg_rec --> fct
-stg_est --> dim_est
 stg_usr --> dim_usr
 stg_rec --> dim_t   : derivado
 
 stg_rec --> mart_ml
-stg_est --> mart_ml
 stg_usr --> mart_ml
 
 mart_bi --> bi : parquet
 mart_ml --> ml : parquet
 
 ' ---------- dbt como capa transversal ----------
-dbt_sources ..> raw_rec : declara
-dbt_models  ..> stg_rec : materializa
-dbt_models  ..> mart_bi : materializa
-dbt_models  ..> mart_ml : materializa
-dbt_tests   ..> stg_rec : valida
-dbt_tests   ..> mart_bi : valida
-dbt_tests   ..> mart_ml : valida
+dbt_sources ..> raw_rec22 : declara
+dbt_models  ..> stg_rec   : materializa
+dbt_models  ..> mart_bi   : materializa
+dbt_models  ..> mart_ml   : materializa
+dbt_tests   ..> stg_rec   : valida
+dbt_tests   ..> mart_bi   : valida
+dbt_tests   ..> mart_ml   : valida
 
 note bottom of dbt_tests
   Métricas de calidad

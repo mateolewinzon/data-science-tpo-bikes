@@ -8,6 +8,16 @@ UADE — TPO DataScience 2026. This repo contains **only the ELT (dbt) track** o
 
 The user is a web developer learning the data stack. Prefer analogies that map to web/devops when explaining new concepts.
 
+## Decision log — keep it current
+
+Data and modeling decisions that aren't obvious from the code are tracked in [`docs/decisions.md`](docs/decisions.md). Read it before proposing changes that might conflict with an existing entry.
+
+**Scope** — what goes in `docs/decisions.md`: modeling decisions (which sources to include/exclude, how to union or split tables, how columns are cast, dedup strategy, dimensional design), data-quality trade-offs (rejecting vs. capping outliers, threshold choices for quality tests), layer-boundary choices (what belongs in raw vs. staging vs. mart), cross-team alignment with the Python team. **Not in scope:** file paths, directory layout, Python/dbt versions, tool installation, package pinning, formatting conventions — those are plumbing and live in README / config files / code comments.
+
+Append a new entry whenever a non-trivial modeling choice is made. Each entry must include the date (absolute, not "today"), the decision, **Por qué** (so future-us can judge whether the reason still applies), **Trade-off** (what was sacrificed), and **Estado** (Activa / Pendiente / Superada).
+
+If a new decision contradicts an older one, do not silently overwrite the old entry — mark the old one as **Superada por [fecha de la nueva]** and add the new one below. The history matters for the oral defense.
+
 ## Architecture
 
 Medallion lakehouse, all layers persisted as **Parquet** (required by the enunciado):

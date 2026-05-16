@@ -6,15 +6,21 @@ sources:
       Datos crudos del sistema de Bicicletas Públicas de Buenos Aires (2022-2024).
       Fuente: https://data.buenosaires.gob.ar/dataset/bicicletas-publicas
     meta:
-      external_location: "data/source/{name}.csv"
+      # Leemos como all_varchar para preservar fidelidad del CSV: la inferencia
+      # de tipos de DuckDB rompía con valores anómalos (p.ej. edad_usuario="1,019"
+      # en usuarios_ecobici_2022.csv). El casting explícito de tipos y la
+      # validación de rangos viven en la capa staging.
+      external_location: "read_csv('data/source/{name}.csv', all_varchar=true, header=true)"
     tables:
-      - name: recorridos_2022
+      - name: trips_2022
         description: Recorridos (trips) realizados durante 2022.
-      - name: recorridos_2023
+      - name: trips_2023
         description: Recorridos realizados durante 2023.
-      - name: recorridos_2024
+      - name: badata_ecobici_recorridos_realizados_2024
         description: Recorridos realizados durante 2024.
-      - name: estaciones
-        description: Catálogo de estaciones (id, nombre, lat/long, barrio).
-      - name: usuarios
-        description: Padrón de usuarios (id anonimizado, edad, género, fecha alta).
+      - name: usuarios_ecobici_2022
+        description: Padrón de usuarios 2022.
+      - name: usuarios_ecobici_2023
+        description: Padrón de usuarios 2023.
+      - name: usuarios_ecobici_2024
+        description: Padrón de usuarios 2024.

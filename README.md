@@ -46,7 +46,8 @@ Diagrama detallado: [`docs/diagrams/elt_dbt_overview.puml`](docs/diagrams/elt_db
 
 - **Todo materializa como `external` parquet** (`+materialized: external` en `dbt_project.yml`). DuckDB mantiene una vista sobre el parquet para que `dbt run`/`dbt test` funcionen; el archivo `.parquet` es la fuente de verdad.
 - **`profiles.yml` vive en el repo** (no en `~/.dbt/`) para que todo el equipo corra exactamente la misma configuración.
-- **Macro `generate_schema_name.sql`** hace que los schemas queden como `raw`, `stg`, `mart_bi`, `mart_ml` (sin prefijo del target).
+- **Override de `generate_schema_name`** hace que los schemas queden como `raw`, `stg`, `mart_bi`, `mart_ml` (sin prefijo del target).
+- **Override de `external_location`** (macro built-in de `dbt-duckdb`) hace que cada modelo se materialice en `data/{schema}/{name}.parquet`. El default de la lib omite el schema y todo cae plano en `data/`.
 
 ## Flujo
 
@@ -60,7 +61,7 @@ Diagrama detallado: [`docs/diagrams/elt_dbt_overview.puml`](docs/diagrams/elt_db
 
 ## Cómo correrlo localmente
 
-Requisitos: Python 3.10+.
+Requisitos: Python **3.10–3.12**. dbt-core no soporta Python 3.13+ todavía (mashumaro, una dep transitiva, falla al importar). En macOS: `brew install python@3.12` y crear el venv con `/opt/homebrew/bin/python3.12 -m venv .venv`.
 
 ```bash
 # clonar y entrar al repo
@@ -79,7 +80,7 @@ dbt deps
 dbt debug
 ```
 
-Poner los CSVs descargados en `data/source/` con los nombres que figuran en `models/raw/_sources.yml` (`recorridos_2022.csv`, `recorridos_2023.csv`, `recorridos_2024.csv`, `estaciones.csv`, `usuarios.csv`).
+Los CSVs viven en este [drive compartido del equipo](https://drive.google.com/drive/u/0/folders/1NFPPRk0epJU4Uyf76mtCti4HAXI3B5lo) — descargarlos tal cual a `data/source/` (los nombres ya coinciden con los declarados en `models/raw/_sources.yml`).
 
 ```bash
 # correr el pipeline completo (run + test)
@@ -111,7 +112,7 @@ duckdb -c "select count(*) from 'data/mart_bi/fct_recorridos.parquet'"
 ├── profiles.yml             conexión DuckDB (project-local)
 ├── packages.yml             dbt_utils, dbt_expectations
 ├── requirements.txt         dbt-core, dbt-duckdb
-├── macros/                  override de generate_schema_name
+├── macros/                  overrides de generate_schema_name y external_location
 ├── models/
 │   ├── raw/                 sources + parquet bronze
 │   ├── staging/             limpieza + normalización

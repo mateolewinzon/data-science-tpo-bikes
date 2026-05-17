@@ -1,0 +1,125 @@
+version: 2
+
+models:
+  - name: stg_recorridos_2022
+    description: Recorridos 2022 normalizados (strip BAEcobici, parse miles).
+    columns:
+      - name: id_recorrido
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_recorridos_2023
+    description: Recorridos 2023 normalizados (strip BAEcobici, parse miles).
+    columns:
+      - name: id_recorrido
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_recorridos_2024
+    description: >
+      Recorridos 2024 normalizados (strip '.0' en id_usuario). Tests sobre
+      id_recorrido aceptan el duplicado byte-idéntico conocido (~1 fila);
+      la unique se aplica solo en stg_recorridos tras el distinct.
+
+  - name: stg_recorridos
+    description: >
+      Recorridos unificados 2022-2024. UNION ALL de los modelos per-año,
+      con `select distinct` para eliminar el único duplicado byte-idéntico
+      detectado en 2024. Entrada para fct_recorridos (BI) y feature set (ML).
+    columns:
+      - name: id_recorrido
+        description: ID único del recorrido (BIGINT). Único globalmente tras el dedup.
+        tests:
+          - not_null
+          - unique
+
+      - name: id_usuario
+        description: >
+          ID del usuario que realizó el recorrido. NO es FK estricta contra
+          stg_usuarios — el padrón de usuarios contiene únicamente altas
+          nuevas del año, así que ~30% de los id_usuario en recorridos no
+          tienen match (usuarios dados de alta en años previos al rango).
+          Documentado en docs/decisions.md (2026-05-17).
+        tests:
+          - not_null
+
+      - name: duracion_seg
+        description: >
+          Duración del recorrido en segundos. Sin filtro de outliers: viajes
+          >24h (260 en 2022) representan bicis no devueltas y se preservan;
+          BI/ML deciden cómo tratarlos. Valor 0 indica recorrido sin cierre
+          (ver fecha_destino).
+
+      - name: fecha_origen
+        description: Timestamp de inicio del recorrido.
+        tests:
+          - not_null
+
+      - name: fecha_destino
+        description: >
+          Timestamp de fin. NULL en ~3.379 registros de 2024 (recorridos sin
+          cierre al momento del export). Esos casos tienen duracion_seg=0.
+
+      - name: id_estacion_origen
+        description: ID de la estación de origen.
+        tests:
+          - not_null
+
+      - name: id_estacion_destino
+        description: >
+          ID de la estación de destino. Nullable: 2 filas en 2023 traen
+          NULL aunque tengan fecha_destino y duracion_seg válidos
+          (probable devolución a estación retirada del catálogo). Sin
+          test not_null porque ese caso es semánticamente válido.
+
+      - name: lat_estacion_origen
+      - name: long_estacion_origen
+      - name: lat_estacion_destino
+      - name: long_estacion_destino
+
+      - name: modelo_bicicleta
+        description: FIT (bici clásica) o ICONIC (modelo previo).
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['FIT', 'ICONIC']
+
+      - name: genero_usuario
+        description: >
+          Género autodeclarado al momento del recorrido. Nullable
+          (~40k filas con NULL across years).
+        tests:
+          - accepted_values:
+              values: ['MALE', 'FEMALE', 'OTHER']
+              config:
+                # Permitimos NULL; accepted_values no falla por NULLs.
+                where: "genero_usuario is not null"
+
+      - name: anio_archivo
+        description: Año del CSV de origen. Útil para particionamiento y trazabilidad.
+        tests:
+          - not_null
+          - accepted_values:
+              values: [2022, 2023, 2024]
+
+    # Quality tests con threshold documentado.
+    #
+    # Q1 (singular en tests/q1_stg_recorridos_pct_duracion_valida.sql):
+    #     % de duracion_seg con valor positivo y razonable (>0 y ≤24h).
+    #     Threshold: ≥99%.
+    #     Justificación: viajes con duración=0 son "no completados" (~3.4k
+    #     en 2024); viajes >24h son bicis no devueltas (~260 en 2022).
+    #     En conjunto representan <0.5% del total, así que 99% deja margen
+    #     y detecta degradación material.
+    #
+    # Q2: row count del modelo total.
+    # Justificación: 2.92M + 2.62M + 3.56M = ~9.1M filas. Rango [8M, 10M]
+    # permite ±10% para nuevos años / loads parciales. Detecta carga
+    # parcial (faltó un año) o duplicación grosera.
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          min_value: 8000000
+          max_value: 10000000
+          name: q2_row_count_8m_10m

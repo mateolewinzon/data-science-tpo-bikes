@@ -1,0 +1,95 @@
+version: 2
+
+models:
+  - name: stg_usuarios_2022
+    description: >
+      Padrón de usuarios 2022 con tipos casteados y edad fuera de [16,100]
+      reemplazada por NULL. Mantiene Customer.Has.Dni como booleano tiene_dni.
+    columns:
+      - name: id_usuario
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_usuarios_2023
+    description: Padrón de usuarios 2023. Misma lógica que stg_usuarios_2022.
+    columns:
+      - name: id_usuario
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_usuarios_2024
+    description: >
+      Padrón de usuarios 2024. El CSV de origen no trae la columna de DNI,
+      por eso tiene_dni queda NULL para todas las filas.
+    columns:
+      - name: id_usuario
+        tests:
+          - not_null
+          - unique
+
+  - name: stg_usuarios
+    description: >
+      Padrón unificado de usuarios 2022-2024. UNION ALL de los tres modelos
+      per-año. Esta es la entrada para los marts (dim_usuarios en BI,
+      feature set en ML).
+    columns:
+      - name: id_usuario
+        description: ID único del usuario (BIGINT). Único globalmente — el análisis previo confirmó 0 duplicados intra/inter-año.
+        tests:
+          - not_null
+          - unique
+
+      - name: genero_usuario
+        description: Género autodeclarado. Ya estandarizado en la fuente.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['MALE', 'FEMALE', 'OTHER']
+
+      - name: edad_usuario
+        description: >
+          Edad declarada al momento del alta. NULL si la edad original cae
+          fuera de [16, 100] (regla oficial Ecobici ≥16 + tope superior
+          razonable). Esto cubre valores con thousand-separator y outliers
+          tipo "año de nacimiento". Ver decisions.md (2026-05-17).
+
+      - name: fecha_alta
+        description: Fecha de alta del usuario.
+        tests:
+          - not_null
+
+      - name: hora_alta
+        description: Hora de alta del usuario.
+        tests:
+          - not_null
+
+      - name: tiene_dni
+        description: >
+          Indica si el usuario tenía DNI registrado al momento del alta.
+          NULL para todo 2024 (columna no provista en el CSV de ese año).
+
+      - name: anio_archivo
+        description: Año del CSV de origen (2022/2023/2024). Útil para trazabilidad y tests por partición.
+        tests:
+          - not_null
+          - accepted_values:
+              values: [2022, 2023, 2024]
+
+    # Quality tests con threshold documentado (requerimiento del enunciado:
+    # ≥2 métricas de calidad con justificación).
+    #
+    # Q1 vive como singular test en tests/q1_stg_usuarios_pct_edad_valida.sql
+    #    porque dbt_expectations no soporta threshold porcentual nativo —
+    #    el SQL custom mide ratio y falla si < 0.99.
+    #
+    # Q2: row count de stg_usuarios dentro de [400k, 500k].
+    # Justificación: 439.140 ± ~10% acomoda crecimiento esperado del
+    # servicio. Detecta loads parciales (faltó un año) o duplicación
+    # accidental por bug en el UNION.
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          min_value: 400000
+          max_value: 500000
+          name: q2_row_count_400k_500k

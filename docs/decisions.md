@@ -51,3 +51,111 @@ Bonus conceptual: "raw all-varchar, staging explicit cast" hace explícita la fr
 **Estado:** Activa.
 
 ---
+
+## [2026-05-17] Staging usuarios: 3 modelos per-año + 1 unión
+
+**Decisión:** En `models/staging/` viven cuatro archivos para usuarios: `stg_usuarios_2022.sql`, `stg_usuarios_2023.sql`, `stg_usuarios_2024.sql` (cast + rename + lógica específica del año) y `stg_usuarios.sql` (`UNION ALL` de los tres). El esquema canónico (`id_usuario, genero_usuario, edad_usuario, fecha_alta, hora_alta, tiene_dni, anio_archivo`) se define en los modelos per-año; el union es `select *`.
+
+**Por qué:** Cada CSV de usuarios tiene idiosincrasias distintas (`ID_usuario` vs `id_usuario`, columna `Customer.Has.Dni..Yes...No.` presente en 2022/23 y ausente en 2024). Aislar cada una en su propio modelo per-año mantiene el SQL legible y mapea 1:1 con la convención ya tomada en raw (`[2026-05-16] Raw es espejo literal del CSV — un modelo por archivo`). Cuando llegue 2025, se toca un archivo nuevo y una línea del union.
+
+**Trade-off:** Cuatro archivos para algo que cabría en uno. Aceptable: el costo es una línea extra en el union por año.
+
+**Estado:** Activa.
+
+---
+
+## [2026-05-17] Política de edad: NULL fuera de [16, 100]
+
+**Decisión:** En staging, `edad_usuario` se castea y luego se filtra con `case when edad_parsed between 16 and 100 then edad_parsed end`. Fuera del rango (incluyendo el thousand-separator `"1,019"` que parsea a 1019, edades `<16` que violan la FAQ Ecobici, y outliers tipo año-de-nacimiento) queda NULL. **La fila se conserva** — id, género, fechas siguen valiendo.
+
+**Por qué:** El enunciado pide ≥2 métricas de calidad con thresholds. Mantener la fila con edad NULL permite (a) no perder al usuario para joins con recorridos, (b) medir `% de filas con edad válida` como métrica de calidad reportable. El rango es defendible: 16 es la cota inferior oficial del servicio (FAQ Ecobici), 100 es una cota superior razonable.
+
+**Trade-off:** BI y ML reciben edad nullable y tienen que decidir cómo tratarla (excluir, imputar, etc.). Reportes que necesiten edad obligatoria deben filtrar `edad_usuario is not null` explícitamente.
+
+**Cross-team:** El equipo Python debe aplicar el mismo filtro para que los conteos cuadren. Si ellos deciden droppear filas, los row counts van a diferir.
+
+**Estado:** Activa.
+
+---
+
+## [2026-05-17] No recuperar outliers de edad como "año de nacimiento"
+
+**Decisión:** Los ~5 valores de `edad_usuario` que caen en el rango 1924-2024 (sobre 94 outliers totales `>100`) no se reconstruyen como `anio_archivo - valor`. Quedan NULL como el resto del ruido.
+
+**Por qué:** 5 casos sobre 439.140 usuarios (~0.001%) no justifican una heurística que tendríamos que defender en la oral. Reconstruir como `2024 - valor` da edades de 3-20 años, varias de las cuales caerían `<16` y volverían a quedar fuera del rango. Ganancia marginal vs. complejidad y riesgo de inventar señal.
+
+**Trade-off:** Se pierden ~3 usuarios potencialmente recuperables. Si más adelante aparece una motivación BI/ML concreta para recuperarlos, la decisión se puede revertir.
+
+**Estado:** Activa.
+
+---
+
+## [2026-05-17] Staging recorridos: normalización de IDs heterogéneos
+
+**Decisión:** En `stg_recorridos_*` se aplica la siguiente normalización:
+
+- `id_recorrido`, `id_estacion_origen`, `id_estacion_destino`, `id_usuario` en 2022/23 traen sufijo `BAEcobici` (100% de filas). Se hace `replace(..., 'BAEcobici', '')` antes del cast.
+- `id_usuario` en 2024 trae sufijo `.0` (100% de filas, artifact del cast float→str en el export). Se hace `replace(..., '.0', '')` antes del cast.
+- Columnas índice basura `column00` (2022 y 2023) y `X` (solo 2022) se descartan; eran enumeraciones 1..999999 sin valor analítico.
+- `duracion_recorrido` con separador de miles (`"1,020"`) en ~46% de filas de 2022/23: `replace(',', '')` + cast.
+- Capitalización dispar (`Id_recorrido`/`id_recorrido`, `Género`/`género`/`genero`): se unifica al lowercase canónico (`id_recorrido`, `genero_usuario`).
+
+**Por qué:** Para que `stg_recorridos` (el UNION ALL) tenga tipos uniformes (BIGINT/SMALLINT) y los marts puedan hacer joins eficientes sin string-matching. Estos sufijos son artefactos del CSV de origen, no semántica del dominio.
+
+**Trade-off:** Cada `stg_recorridos_<año>.sql` lleva su propia receta de cleaning. Si en 2025 aparece un nuevo formato (otro sufijo, otra variación), se agrega un cuarto archivo. Aceptable.
+
+**Estado:** Activa.
+
+---
+
+## [2026-05-17] Recorridos: preservar outliers de duración y recorridos sin cierre
+
+**Decisión:** `stg_recorridos.duracion_seg` se castea pero NO se filtra. Se preservan:
+- 260 viajes >24h en 2022 (probables bicis no devueltas).
+- ~3.4k filas de 2024 con `duracion_seg=0` y `fecha_destino is null` (recorridos sin cierre al momento del export, concentrados al final del año).
+
+**Por qué:** Son outliers reales del dominio, no errores de parsing. Filtrarlos en staging oculta señal útil (tasa de bicis no devueltas es un KPI operacional). El mart BI o el feature set ML deciden qué hacer (excluir, separar dim "perdidos", etc.). La métrica Q1 mide el % de viajes con duración válida (>0 y ≤24h) — threshold 99%.
+
+**Trade-off:** Cualquier reporte BI que use `duracion_seg` sin filtrar va a tener cola larga. Hay que documentarlo en cada gráfico.
+
+**Estado:** Activa.
+
+---
+
+## [2026-05-17] Dedup en recorridos: 1 registro byte-idéntico en 2024
+
+**Decisión:** En `stg_recorridos.sql` (el union) se usa `select distinct *` para eliminar el único duplicado byte-idéntico detectado (id_recorrido `22425357` en 2024, dos filas idénticas).
+
+**Por qué:** Es un dup byte-idéntico — no hay ambigüedad sobre cuál fila "preservar". `distinct` es la opción más simple y honesta. Alternativa `row_number() partition by id_recorrido` no aporta acá porque no hay criterio de ordenamiento que distinga las filas.
+
+**Trade-off:** `distinct *` sobre 9M filas tiene costo (hash sobre todas las columnas). En DuckDB local es aceptable (~1-2s). Si en el futuro aparecieran muchos dups con diferencias parciales, conviene migrar a un dedup explícito con criterio.
+
+**Estado:** Activa.
+
+---
+
+## [2026-05-17] FK floja entre recorridos e usuarios: ~30% de huérfanos esperados
+
+**Decisión:** `stg_recorridos.id_usuario` NO tiene relationship test contra `stg_usuarios.id_usuario`. El join `recorridos → usuarios` en marts será LEFT (outer), no INNER.
+
+**Por qué:** El padrón de usuarios contiene solo *altas* del año respectivo (439k usuarios únicos 2022-2024). Los recorridos referencian 488k usuarios únicos, de los cuales ~147k (~30%) son usuarios dados de alta antes de 2022 y por lo tanto no figuran en ningún padrón. Esto es comportamiento esperado de los datasets, no inconsistencia.
+
+**Trade-off:** Análisis BI/ML que dependan de atributos del usuario (edad, género del padrón) van a tener cobertura ~70%. Para el segmento "histórico" no hay forma de recuperar esos atributos desde el dataset disponible. Documentar en el informe como limitación.
+
+**Cross-team:** El equipo Python debería ver exactamente el mismo % de huérfanos. Si los conteos difieren, hay bug de matching de tipos (string vs int, sufijo no removido, etc.).
+
+**Estado:** Activa.
+
+---
+
+## [2026-05-17] `tiene_dni` BOOLEAN nullable, NULL para 2024
+
+**Decisión:** La columna `Customer.Has.Dni..Yes...No.` de los CSV 2022/2023 se mapea a `tiene_dni BOOLEAN` (`Yes→true, No→false`). El CSV 2024 no trae esa columna, así que para todas las filas de 2024 `tiene_dni = NULL`.
+
+**Por qué:** Conservar la señal donde existe (~106k filas con dato real) es preferible a dropear la columna globalmente. NULL es semánticamente correcto: significa "columna no provista en el archivo de origen", distinguible de un usuario que efectivamente reportó no tener DNI (`false`).
+
+**Trade-off:** Cualquier análisis BI/ML que use `tiene_dni` tiene que filtrar por `anio_archivo in (2022,2023)` o aceptar el sesgo. Documentado en la descripción del campo en `_stg_usuarios.yml`.
+
+**Estado:** Activa.
+
+---

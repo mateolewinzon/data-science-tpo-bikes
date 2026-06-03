@@ -159,3 +159,23 @@ Bonus conceptual: "raw all-varchar, staging explicit cast" hace explícita la fr
 **Estado:** Activa.
 
 ---
+
+## [2026-06-03] Mart ML: caso de uso = predicción de duración de viaje (regresión)
+
+**Decisión:** El primer (y por ahora único) modelo de `mart_ml` es `ml_duracion_recorridos`, un feature set para **regresión supervisada** que predice `duracion_seg`. Grano: 1 fila = 1 recorrido. Features: `distancia_km` (haversine entre estaciones), `hora_origen`, `dia_semana` (isodow), `es_fin_de_semana`, `mes`, `modelo_bicicleta`. Se conserva `id_recorrido` como clave de trazabilidad (no es feature; el equipo ML lo dropea antes de `fit`).
+
+**Por qué:**
+- **Target real, no inventado:** `duracion_seg` ya existe en `stg_recorridos`. Caso defendible en la oral sin construir labels heurísticos (descartamos "commuter vs. paseo" justamente porque el label habría que justificarlo).
+- **Mínima fricción de modelado:** el mart es casi `stg_recorridos` + columnas derivadas, sin capa de agregación (descartamos "demanda por estación/hora", que la requería).
+- **Pocas features, todas derivables sin joins externos** — apropiado para el nivel del equipo y suficiente para un baseline de regresión con métrica estándar (RMSE/MAE en segundos).
+- `distancia_km` por Haversine es la feature dominante esperada (a más distancia, más duración).
+
+**Filtro de entrenamiento:** se incluyen solo viajes con `duracion_seg > 0 and <= 86400` (≤24h) y con lat/long no nulos en ambos extremos. Reutiliza el umbral de la métrica de calidad Q1 de `stg_recorridos` (no es un threshold nuevo): `duracion=0` son viajes sin cierre (~3.4k en 2024) y `>24h` son bicis no devueltas (~260 en 2022) — ruido que envenena la regresión. Resultado: ~9.06M filas sobre las ~9.1M de staging.
+
+**Trade-off:** Es un único caso de uso; si el TP exige cubrir clasificación o no-supervisado, hay que sumar otro mart. La selección de features es deliberadamente mínima: no incluimos estación origen/destino como categóricas (alta cardinalidad) ni edad/género del usuario (requeriría join con `stg_usuarios`, que tiene ~30% de no-match). Si el modelo baseline rinde mal, esas son las primeras palancas para enriquecer.
+
+**Cross-team:** Si el equipo Python hace el mismo caso de uso, deben aplicar idéntico filtro de duración y la misma fórmula de Haversine (R=6371 km) para que los row counts y las distancias cuadren.
+
+**Estado:** Activa.
+
+---

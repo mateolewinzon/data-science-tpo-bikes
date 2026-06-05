@@ -176,6 +176,22 @@ Bonus conceptual: "raw all-varchar, staging explicit cast" hace explícita la fr
 
 **Cross-team:** Si el equipo Python hace el mismo caso de uso, deben aplicar idéntico filtro de duración y la misma fórmula de Haversine (R=6371 km) para que los row counts y las distancias cuadren.
 
+**Estado:** Activa — filtro de duración superado por [2026-06-05].
+
+---
+
+## [2026-06-05] Mart ML: filtro de duración ajustado a > 60 seg y < 7200 seg
+
+**Decisión:** El filtro de entrenamiento de `ml_duracion_recorridos` pasa de `duracion_seg > 0 and <= 86400` a `duracion_seg > 60 and < 7200`. Reemplaza el filtro registrado en [2026-06-03].
+
+**Por qué:**
+- `<= 60 seg` → cancelaciones o errores de registro: el usuario saca y devuelve la bici en segundos, no es un viaje real y contamina la regresión.
+- `>= 7200 seg (2h)` → bicis no devueltas o errores de registro: outlier de cola larga que distorsiona el target mucho más que el umbral previo.
+
+**Trade-off:** Se excluyen viajes de entre 2h y 24h que el filtro anterior incluía. Para el baseline de regresión de viajes cotidianos el rango 1min–2h cubre el grueso de la distribución; si se quisieran predecir viajes muy largos habría que elevar el techo.
+
+**Cross-team:** El equipo Python debe aplicar el mismo filtro (`> 60 and < 7200`) para que los row counts del feature set cuadren.
+
 **Estado:** Activa.
 
 ---

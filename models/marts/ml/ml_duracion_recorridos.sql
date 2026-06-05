@@ -62,17 +62,16 @@ features as (
     from recorridos
 
     -- ---- Filtro de filas para entrenamiento ----
-    -- Solo viajes con duración "razonable": >0 y ≤ 24h (86400 seg).
-    -- Mismo umbral que la métrica de calidad Q1 de stg_recorridos
-    -- (>0 y ≤24h). Excluimos:
-    --   - duracion_seg = 0  → viajes sin cierre (~3.4k en 2024): no es señal,
-    --                          es un registro incompleto. Envenena la regresión.
-    --   - duracion_seg > 24h → bicis no devueltas (~260 en 2022): outliers que
-    --                          distorsionan el target.
+    -- Solo viajes con duración "razonable": > 60 seg y < 7200 seg (2h).
+    -- Excluimos:
+    --   - duracion_seg <= 60  → cancelaciones o errores de registro:
+    --                           no representan un viaje real.
+    --   - duracion_seg >= 7200 → bicis no devueltas o errores de registro:
+    --                            outliers que distorsionan el target.
     -- Y exigimos lat/long no nulos en ambos extremos para que distancia_km
     -- sea calculable (descarta las ~2 filas de 2023 con estación destino NULL).
-    where duracion_seg > 0
-      and duracion_seg <= 86400
+    where duracion_seg > 60
+      and duracion_seg < 7200
       and lat_estacion_origen   is not null
       and long_estacion_origen  is not null
       and lat_estacion_destino  is not null

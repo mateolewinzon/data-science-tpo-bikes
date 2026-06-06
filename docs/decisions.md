@@ -180,6 +180,22 @@ Bonus conceptual: "raw all-varchar, staging explicit cast" hace explícita la fr
 
 ---
 
+## [2026-06-05] Mart BI: estrella con Fact_Viajes + 3 dimensiones
+
+**Decisión:** El mart BI implementa un esquema estrella con 4 tablas: `fct_viajes`, `dim_estacion`, `dim_fecha`, `dim_usuario`. Grano de la tabla de hechos: 1 fila por combinación de (usuario, estación origen, estación destino, día). Medidas: `cantidad` (COUNT de viajes) y `minutos_promedio` (AVG de duración truncada a minutos).
+
+**Por qué:**
+- **Pre-agregación por día:** reduce el volumen de 9M filas a ~1-2M combinaciones únicas. Las herramientas BI (Tableau, Power BI) trabajan más rápido con tablas pre-agregadas que calculando SUM/AVG sobre la tabla de hechos transaccional.
+- **dim_fecha con id YYYYMMDD:** evita una tabla de fechas pre-generada externa. DuckDB puede evaluar `strftime('%Y%m%d', date)` directamente en el filtro del hecho.
+- **Excluir duracion_seg = 0 en el hecho:** los viajes sin cierre (~3.4k en 2024) tienen duración=0 y no representan recorridos completados. Incluirlos sesgaría `minutos_promedio` hacia 0.
+- **dim_estacion derivada de recorridos:** consistente con la decisión [2026-05-16] de no bajar el catálogo externo.
+
+**Trade-off:** El grano pre-agregado impide analizar viajes individuales desde la herramienta BI (no hay `id_recorrido`). Si se necesita drill-down a nivel de viaje individual, habría que agregar una segunda tabla de hechos con grano transaccional. La FK `id_usuario → dim_usuario` tiene ~30% de huérfanos esperados (ver [2026-05-17]); las herramientas BI mostrarán un nulo o "Desconocido" para esos usuarios.
+
+**Estado:** Activa.
+
+---
+
 ## [2026-06-05] Mart ML: filtro de duración ajustado a > 60 seg y < 7200 seg
 
 **Decisión:** El filtro de entrenamiento de `ml_duracion_recorridos` pasa de `duracion_seg > 0 and <= 86400` a `duracion_seg > 60 and < 7200`. Reemplaza el filtro registrado en [2026-06-03].

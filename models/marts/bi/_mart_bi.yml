@@ -1,0 +1,130 @@
+version: 2
+
+models:
+
+  - name: dim_estacion
+    description: >
+      Catálogo de estaciones activas 2022-2024, derivado de stg_recorridos.
+      Cubre tanto estaciones de origen como de destino. Sin barrio/comuna
+      (ver decisions.md [2026-05-16]).
+    columns:
+      - name: id
+        description: ID de la estación (SMALLINT). PK.
+        tests:
+          - not_null
+          - unique
+      - name: nombre
+        description: Nombre de la estación. Se toma el valor más reciente vía MAX.
+        tests:
+          - not_null
+
+  - name: dim_fecha
+    description: >
+      Dimensión fecha con granularidad de día. Generada desde las fechas
+      de inicio de viaje presentes en stg_recorridos. id = YYYYMMDD entero
+      (ej. 20220101).
+    columns:
+      - name: id
+        description: Clave de fecha en formato YYYYMMDD (INTEGER). PK.
+        tests:
+          - not_null
+          - unique
+      - name: dia
+        description: Día del mes (1-31).
+        tests:
+          - not_null
+      - name: mes
+        description: Mes del año (1-12).
+        tests:
+          - not_null
+      - name: semana
+        description: Semana ISO del año (1-53).
+        tests:
+          - not_null
+      - name: anio
+        description: Año (2022, 2023 o 2024).
+        tests:
+          - not_null
+          - accepted_values:
+              values: [2022, 2023, 2024]
+      - name: fecha_completa
+        description: Fecha como tipo DATE. Útil para filtros en herramientas BI.
+        tests:
+          - not_null
+
+  - name: dim_usuario
+    description: >
+      Atributos de usuario del padrón unificado 2022-2024. Cubre ~70% de los
+      usuarios presentes en fct_viajes (el 30% restante son altas previas a
+      2022, sin padrón disponible). Grano: 1 fila por usuario.
+    columns:
+      - name: id
+        description: ID del usuario (BIGINT). PK.
+        tests:
+          - not_null
+          - unique
+      - name: edad
+        description: Edad declarada al momento del alta. NULL si fuera de [16, 100].
+      - name: genero
+        description: Género autodeclarado (MALE, FEMALE, OTHER). Nullable.
+        tests:
+          - accepted_values:
+              values: ['MALE', 'FEMALE', 'OTHER']
+              config:
+                where: "genero is not null"
+      - name: rango_etario
+        description: >
+          Rango etario derivado de edad. Categorías: 16-25, 26-35, 36-50,
+          51-65, 66+, Desconocido (cuando edad es NULL).
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['16-25', '26-35', '36-50', '51-65', '66+', 'Desconocido']
+
+  - name: fct_viajes
+    description: >
+      Tabla de hechos del mart BI. Grano: 1 fila por combinación de
+      (usuario, estación origen, estación destino, día). Agrega cantidad de
+      viajes y duración promedio. Excluye viajes sin cierre (duracion_seg = 0).
+      La FK id_usuario tiene cobertura ~70% contra dim_usuario (ver decisions.md
+      [2026-05-17] FK floja). Las FKs id_estacion_* son 100% cubiertas por
+      dim_estacion.
+    columns:
+      - name: id
+        description: Surrogate key (BIGINT). Generado por row_number. PK.
+        tests:
+          - not_null
+          - unique
+      - name: id_usuario
+        description: FK → dim_usuario.id. ~30% sin match esperado.
+        tests:
+          - not_null
+      - name: id_estacion_origen
+        description: FK → dim_estacion.id. Estación donde se inició el viaje.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_estacion')
+              field: id
+      - name: id_estacion_destino
+        description: FK → dim_estacion.id. Estación donde se devolvió la bici.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_estacion')
+              field: id
+      - name: id_fecha
+        description: FK → dim_fecha.id (formato YYYYMMDD).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_fecha')
+              field: id
+      - name: cantidad
+        description: Cantidad de viajes en la combinación (usuario, origen, destino, día).
+        tests:
+          - not_null
+      - name: minutos_promedio
+        description: Duración promedio de los viajes en minutos (truncado a entero).
+        tests:
+          - not_null

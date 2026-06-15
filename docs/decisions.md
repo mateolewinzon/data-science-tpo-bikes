@@ -196,6 +196,24 @@ Bonus conceptual: "raw all-varchar, staging explicit cast" hace explícita la fr
 
 ---
 
+## [2026-06-13] Mart BI: rediseño a esquema con Dim_Demografía + Dim_Recorrido + Fact_Actividad
+
+**Decisión:** El mart BI pasa de 4 a 6 tablas. `dim_usuario` queda eliminada y es reemplazada por `dim_demografia` (combinaciones únicas de genero × rango_etario). Se agregan `dim_recorrido` (pares origen→destino) y `fact_actividad` (segunda tabla de hechos con grano estación × demografía × día). La tabla `fct_viajes` cambia de grano: antes era (usuario, estación_origen, estación_destino, día); ahora es (demografía, recorrido, día). La medida `minutos_promedio` pasa a llamarse `minutos`.
+
+**Por qué:**
+- El diagrama de diseño entregado por el grupo reemplaza la dimensión de usuario individual por un segmento demográfico, lo que reduce la cardinalidad del hecho y lo hace más útil para análisis agregados en herramientas BI.
+- `dim_recorrido` encapsula el par origen-destino como una entidad, separando la semántica de "ruta" de la geometría de las estaciones.
+- `fact_actividad` permite responder preguntas de demanda por estación y perfil sin necesidad de abrir `fct_viajes` completa.
+- El ~30% de viajes con usuarios huérfanos se agrupa en el segmento `(genero=NULL, rango_etario='Desconocido')` en lugar de quedar fuera del fact.
+
+**Trade-off:** Ya no es posible trazar un viaje individual a un usuario concreto desde el mart BI. `fct_viajes` y `fact_actividad` repiten el mismo JOIN `stg_recorridos → stg_usuarios` (9M × 439k), lo que duplica tiempo de build; si fuera necesario optimizar se podría crear una CTE materializada intermedia. `dim_recorrido` incluye las columnas `id_estacion_origen` e `id_estacion_destino` para facilitar el join desde `fct_viajes` aunque no aparezcan en el diagrama conceptual.
+
+**Superada por:** — (activa).
+
+**Estado:** Activa.
+
+---
+
 ## [2026-06-05] Mart ML: filtro de duración ajustado a > 60 seg y < 7200 seg
 
 **Decisión:** El filtro de entrenamiento de `ml_duracion_recorridos` pasa de `duracion_seg > 0 and <= 86400` a `duracion_seg > 60 and < 7200`. Reemplaza el filtro registrado en [2026-06-03].

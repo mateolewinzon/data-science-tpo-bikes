@@ -52,21 +52,20 @@ models:
         tests:
           - not_null
 
-  - name: dim_usuario
+  - name: dim_demografia
     description: >
-      Atributos de usuario del padrón unificado 2022-2024. Cubre ~70% de los
-      usuarios presentes en fct_viajes (el 30% restante son altas previas a
-      2022, sin padrón disponible). Grano: 1 fila por usuario.
+      Segmentos demográficos únicos: combinaciones de (genero, rango_etario)
+      presentes en el padrón de usuarios. Incluye una fila con genero=NULL y
+      rango_etario='Desconocido' para agrupar al ~30% de usuarios sin padrón
+      disponible (altas previas a 2022). Reemplaza dim_usuario.
     columns:
       - name: id
-        description: ID del usuario (BIGINT). PK.
+        description: Surrogate key (BIGINT). PK.
         tests:
           - not_null
           - unique
-      - name: edad
-        description: Edad declarada al momento del alta. NULL si fuera de [16, 100].
       - name: genero
-        description: Género autodeclarado (MALE, FEMALE, OTHER). Nullable.
+        description: Género autodeclarado (MALE, FEMALE, OTHER, NULL para huérfanos).
         tests:
           - accepted_values:
               values: ['MALE', 'FEMALE', 'OTHER']
@@ -75,44 +74,58 @@ models:
       - name: rango_etario
         description: >
           Rango etario derivado de edad. Categorías: 16-25, 26-35, 36-50,
-          51-65, 66+, Desconocido (cuando edad es NULL).
+          51-65, 66+, Desconocido (edad nula o usuario sin padrón).
         tests:
           - not_null
           - accepted_values:
               values: ['16-25', '26-35', '36-50', '51-65', '66+', 'Desconocido']
 
-  - name: fct_viajes
+  - name: dim_recorrido
     description: >
-      Tabla de hechos del mart BI. Grano: 1 fila por combinación de
-      (usuario, estación origen, estación destino, día). Agrega cantidad de
-      viajes y duración promedio. Excluye viajes sin cierre (duracion_seg = 0).
-      La FK id_usuario tiene cobertura ~70% contra dim_usuario (ver decisions.md
-      [2026-05-17] FK floja). Las FKs id_estacion_* son 100% cubiertas por
-      dim_estacion.
+      Dimensión de rutas únicas: pares (estación_origen, estación_destino)
+      observados en stg_recorridos. La columna ruta concatena los nombres
+      de ambas estaciones como "Origen → Destino". Las columnas
+      id_estacion_origen e id_estacion_destino sirven de clave de join
+      desde fct_viajes (no están en el diagrama conceptual pero son
+      necesarias internamente).
     columns:
       - name: id
-        description: Surrogate key (BIGINT). Generado por row_number. PK.
+        description: Surrogate key (BIGINT). PK.
         tests:
           - not_null
           - unique
-      - name: id_usuario
-        description: FK → dim_usuario.id. ~30% sin match esperado.
-        tests:
-          - not_null
       - name: id_estacion_origen
-        description: FK → dim_estacion.id. Estación donde se inició el viaje.
+        description: FK → dim_estacion.id.
         tests:
           - not_null
           - relationships:
               to: ref('dim_estacion')
               field: id
       - name: id_estacion_destino
-        description: FK → dim_estacion.id. Estación donde se devolvió la bici.
+        description: FK → dim_estacion.id.
         tests:
           - not_null
           - relationships:
               to: ref('dim_estacion')
               field: id
+      - name: ruta
+        description: Cadena "nombre_origen → nombre_destino". VARCHAR(200).
+        tests:
+          - not_null
+
+  - name: fct_viajes
+    description: >
+      Tabla de hechos principal. Grano: 1 fila por combinación de
+      (segmento demográfico, ruta, día). Medidas: cantidad de viajes y
+      duración promedio en minutos. Excluye viajes sin cierre (duracion_seg=0).
+      ~30% de viajes quedan en el segmento demografía NULL/Desconocido por
+      la FK floja recorridos→usuarios (ver decisions.md [2026-05-17]).
+    columns:
+      - name: id
+        description: Surrogate key (BIGINT). PK.
+        tests:
+          - not_null
+          - unique
       - name: id_fecha
         description: FK → dim_fecha.id (formato YYYYMMDD).
         tests:
@@ -120,11 +133,62 @@ models:
           - relationships:
               to: ref('dim_fecha')
               field: id
-      - name: cantidad
-        description: Cantidad de viajes en la combinación (usuario, origen, destino, día).
+      - name: id_demografia
+        description: FK → dim_demografia.id.
         tests:
           - not_null
-      - name: minutos_promedio
+          - relationships:
+              to: ref('dim_demografia')
+              field: id
+      - name: id_recorrido
+        description: FK → dim_recorrido.id.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_recorrido')
+              field: id
+      - name: cantidad
+        description: Cantidad de viajes en la combinación (demografia, ruta, día).
+        tests:
+          - not_null
+      - name: minutos
         description: Duración promedio de los viajes en minutos (truncado a entero).
+        tests:
+          - not_null
+
+  - name: fact_actividad
+    description: >
+      Segunda tabla de hechos. Grano: 1 fila por (segmento demográfico,
+      estación de salida, día). Cuenta viajes completados que partieron de
+      cada estación. Útil para análisis de demanda por nodo y perfil.
+    columns:
+      - name: id
+        description: Surrogate key (BIGINT). PK.
+        tests:
+          - not_null
+          - unique
+      - name: id_fecha
+        description: FK → dim_fecha.id (formato YYYYMMDD).
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_fecha')
+              field: id
+      - name: id_demografia
+        description: FK → dim_demografia.id.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_demografia')
+              field: id
+      - name: id_estacion
+        description: FK → dim_estacion.id. Estación de salida del viaje.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_estacion')
+              field: id
+      - name: cantidad
+        description: Cantidad de viajes que partieron de esa estación en esa combinación.
         tests:
           - not_null
